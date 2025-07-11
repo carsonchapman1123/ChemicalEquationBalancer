@@ -1,3 +1,9 @@
 # Chemical Equation Balancer
 
-This is a simple Python script that can be used to balance chemical equations using regular expressions and SymPy. The balance function takes in a string representing a chemical equation with no leading coefficients. There are a few example usages of the function at the bottom of the script in the assertions.
+A Python script that can be used to balance chemical equations using regular expressions and SymPy. The balance function takes in a string representing a chemical equation with no leading coefficients.
+
+For example,
+```python
+print(balance("CH4+O2=CO2+H2O"))
+```
+would output "CH4+2O2=CO2+2H2O" to the console.
