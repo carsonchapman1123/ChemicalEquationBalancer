@@ -1,133 +1,106 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-
-import numpy as np
-from numpy import linalg as LA
-import sympy as sp
 import re
-from sympy.parsing.sympy_parser import parse_expr
+import sympy as sp
+from typing import List, Dict
 
-# takes a string of a chemical equation and returns a string of the balanced equation.
-# the equation must have no leading coefficients for it to work properly.
-def balance(eq):
-    # n is number of molecules
-    n = len(re.findall(r'\+|\=', eq)) + 1
+def get_molecule_atom_counts_and_element_names(molecules: List[str]) -> Dict[str, int]:
+    """
+    Takes a list of molecules and returns a list of dictionaries
+    where each dictionary maps between chemical symbol and its count
+    for a given molecule in the input list.
+    """
+    molecule_atom_counts = []
+    element_names = set()
+    for molecule in molecules:
+        molecule_atom_count = {}
+        separated_molecule = re.findall(r'[A-Z][a-z]*\d*', molecule)
+        for element_name_and_count in separated_molecule:
+            element_name = re.search(r'[A-Z][a-z]*', element_name_and_count).group()
+            # Add the element name to the set of elements.
+            element_names.add(element_name)
+            if element_name not in molecule_atom_count:
+                molecule_atom_count[element_name] = 0
+            element_count = re.search(r'\d+', element_name_and_count)
+            # If the element has a subscript, add it to the list. Otherwise set it to 1.
+            if element_count:
+                molecule_atom_count[element_name] += int(element_count.group())
+            else:
+                molecule_atom_count[element_name] += 1
+        molecule_atom_counts.append(molecule_atom_count)
+    return molecule_atom_counts, element_names
     
-    # sides is a list containing strings of the two sides of the equations
+
+def balance(eq):
+    """
+    Takes a string of a chemical equation and returns a string of the balanced equation.
+    The equation must have no leading coefficients for it to work properly.
+    """
+    n = len(re.findall(r'\+|\=', eq)) + 1 # The number of molecules in the chemical equation.
+    
+    # Sides is a list containing strings of the two sides of the equation.
     sides = re.findall(r'[^\=]+', eq)
 
-    # separate the left and right hand sides into a list of compound names
-    lcompounds = re.findall(r'[^\s\+]+', sides[0])
-    rcompounds = re.findall(r'[^\s\+]+', sides[1])
+    # Separate the left and right hand sides into a list of compound names.
+    left_molecules = re.findall(r'[^\s\+]+', sides[0])
+    right_molecules = re.findall(r'[^\s\+]+', sides[1])
     
-    # separate the compound names into a list of elements and their counts
-    elements = [] # a list of all the unique elements in the list
-    lelements = [] # a list of the elements and their counts on the lhs of the equation
-    for i in range(len(lcompounds)):
-        compound = [] # a list for this compound to be added to the list of separated compounds
-        separated = re.findall(r'[A-Z][a-z]*\d*', lcompounds[i])
-        for j in range(len(separated)):
-            elementName = re.search(r'[A-Z][a-z]*', separated[j]).group()
-            # add the element name to the set of elements
-            elements.append(elementName)
-            elementCount = re.search(r'\d+', separated[j])
-            # if the element has a subscript, add it to the list. otherwise set it to 1
-            if elementCount:
-                compound.append([elementName, int(elementCount.group())])
-            else:
-                compound.append([elementName, 1])
-        # add the separated compound to the list
-        lelements.append(compound)
-    # do the same type of separation for the right hand side
-    relements = []
-    for i in range(len(rcompounds)):
-        compound = []
-        separated = re.findall(r'[A-Z][a-z]*\d*', rcompounds[i])
-        for j in range(len(separated)):
-            elementName = re.search(r'[A-Z][a-z]*', separated[j]).group()
-            elements.append(elementName)
-            elementCount = re.search(r'\d+', separated[j])
-            if elementCount:
-                compound.append([elementName, int(elementCount.group())])
-            else:
-                compound.append([elementName, 1])
-        relements.append(compound)
+    # Separate the compound names into a list of dicts containing each molecules element counts.
+    # Also get the element names from each side of the equation and combine them to get the complete list.
+    left_element_counts, left_element_names = get_molecule_atom_counts_and_element_names(left_molecules)
+    right_element_counts, right_element_names = get_molecule_atom_counts_and_element_names(right_molecules)
+    element_names = list(left_element_names.union(right_element_names))
     
-    # remove duplicates from the list of elements
-    elements = list(set(elements))
+    # Create a matrix to solve the chemical equation.
+    # Entries from the left side of the equation are positive, and
+    # entries from the right side of the equation are negative in the matrix.
+    left_length = len(left_element_counts)
+    matrix = [[0 for _ in range(n+1)] for _ in range(len(element_names))]
+    for i in range(len(element_names)):
+        element_name = element_names[i]
+        for j in range(len(left_element_counts)):
+            if element_name in left_element_counts[j]:
+                matrix[i][j] += left_element_counts[j][element_name]
+        for j in range(len(right_element_counts)):
+            if element_name in right_element_counts[j]:
+                matrix[i][j + left_length] -= right_element_counts[j][element_name]
     
-    # llength is the length of the left hand side, which will be used to add
-    # numbers from the right hand side of the equation into the proper position
-    # in the matrix
-    llength = len(lelements)
+    # Solve matrix.
+    sympy_matrix = sp.Matrix(matrix)
+    syms = sp.symbols([f"x{num}" for num in range(n)])
+    sols = sp.solve_linear_system(sympy_matrix, *syms)
     
-    # now create the empty matrix
-    matrix = [[0 for _ in range(n+1)] for _ in range(len(elements))]
-    # go element by element adding it to the matrix
-    # i is index of current element
-    for i in range(len(elements)):
-        # find the current element name to search for
-        elementName = elements[i]
-        # check for that element on left hand side and add its count to matrix
-        # j is current molecule number
-        for j in range(len(lelements)):
-            for k in range(len(lelements[j])):
-                # if the element we are searching for is in this molecule
-                if lelements[j][k][0] == elementName:
-                    # then add it to the corresponding row in the matrix
-                    matrix[i][j] += lelements[j][k][1]
-        # now check for element on right hand side and subtract it from matrix
-        for j in range(len(relements)):
-            for k in range(len(relements[j])):
-                if relements[j][k][0] == elementName:
-                    matrix[i][j+llength] -= relements[j][k][1]
-    
-    # now solve matrix for unknowns
-    M = sp.Matrix(matrix)
-    x=[parse_expr('x%d'%i) for i in range(n)]
-    x=sp.symbols('x0:%d'%n)
-    sols=sp.solve_linear_system(M,*x)
-    
-    # substitute in 1 for any free variable    
+    # Substitute in 1 for any free variable.
     for item in sols:
-        for j in range(len(x)):
-            sols[item] = sols[item].subs(x[j],1)
+        for j in range(len(syms)):
+            sols[item] = sols[item].subs(syms[j], 1)
     
-    # create a list of solutions and replace any free variable with 1
-    solList = [0 for _ in range(n)]
-    for i in range(n):
-        varname=sp.symbols("x"+str(i))
-        # if the variable is in the solution matrix, add it to the solution list
-        if varname in sols.keys():
-            solList[i] = sols[varname]
-        else:
-            # otherwise add in 1 as its value
-            solList[i] = sp.Rational(1,1)
-    # create a list of denominators to find the lcm
-    denominators = []
-    for i in range(len(solList)):
-        denominators.append(solList[i].q)
-    lcm = sp.lcm(denominators)
-    # multiply each solution by the lcm
-    for i in range(len(solList)):
-        solList[i] *= lcm
+    # If a variable is missing from the solutions dict, add 1 as its value.
+    for sym in syms:
+        if sym not in sols:
+            sols[sym] = sp.Rational(1, 1)
 
-    # create string to return
-    returnString = ""
-    for i in range(len(lcompounds)):
-        if solList[i] == 1:
-            returnString = returnString + lcompounds[i] + "+"
-        else:
-            returnString = returnString + str(solList[i]) + lcompounds[i] + "+"
-    # remove the one extra "+" at the end of the return string
-    returnString = returnString[:-1]
-    # add the "="
-    returnString = returnString + "="
-    for i in range(len(rcompounds)):
-        if solList[i + llength] == 1:
-            returnString = returnString + rcompounds[i] + "+"
-        else:
-            returnString = returnString + str(solList[i+llength]) + rcompounds[i] + "+"
-    # remove the one extra "+" at the end of the return string
-    returnString = returnString[:-1]
-    return returnString
+    # Create a list of denominators to find the lcm.
+    denominators = [x.q for x in sols.values()]
+    lcm = sp.lcm(denominators)
+
+    # Multiply each solution by the lcm.
+    for sym in sols:
+        sols[sym] *= lcm
+    solutions_list = list(sols.values())
+
+    # Create string to return.
+    left_side = []
+    for i in range(left_length):
+        count = str(solutions_list[i]) if solutions_list[i] > 1 else ""
+        left_side.append("".join([count, left_molecules[i]]))
+    left_side = "+".join(left_side)
+    right_side = []
+    for i in range(len(right_molecules)):
+        count = str(solutions_list[i + left_length]) if solutions_list[i + left_length] > 1 else ""
+        right_side.append("".join([count, right_molecules[i]]))
+    right_side = "+".join(right_side)
+    return_string = "=".join([left_side, right_side])
+    return return_string
+
+assert balance("CH4   + O2  =  CO2 +   H2O") == "CH4+2O2=CO2+2H2O"
+assert balance("H2+O2=H2O") == "2H2+O2=2H2O"
+assert balance("CH3OH=CH3OCH3+H2O") == "2CH3OH=CH3OCH3+H2O"
